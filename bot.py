@@ -1,10 +1,9 @@
 import os
 import json
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
 import requests
 from requests.auth import HTTPBasicAuth
-import openai
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
 
 # Config
@@ -15,21 +14,22 @@ JIRA_API_TOKEN = "ATATT3xFfGF01hoPH3EGiD3DYzynu9PHtezlK3XvqJQflqVFtzYYQSU97fvPfO
 JIRA_PROJECT_KEY = "DEV"
 OPENAI_API_KEY = "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"
 
-# OpenAI
-openai.api_key = OPENAI_API_KEY
+CONFIG = {
+    "emoji": "🙏",
+    "labels": ["telegram-bot", "auto-created"]
+}
 
-# Jira API helper
-def create_jira_issue(summary, description, labels):
+def create_jira_task(title, description):
     """Создает задачу в Jira через REST API"""
     url = f"{JIRA_URL}/rest/api/2/issue"
     
     payload = {
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
-            "summary": summary,
+            "summary": title[:250],
             "description": description,
             "issuetype": {"name": "Task"},
-            "labels": labels
+            "labels": CONFIG["labels"]
         }
     }
     
@@ -43,59 +43,53 @@ def create_jira_issue(summary, description, labels):
     if response.status_code == 201:
         return response.json()
     else:
-        raise Exception(f"Jira API error: {response.status_code} - {response.text}")
+        raise Exception(f"Jira error {response.status_code}: {response.text}")
 
-def search_jira_issues(jql, max_results=50):
-    """Поиск задач в Jira"""
-    url = f"{JIRA_URL}/rest/api/2/search"
+def analyze_with_openai(context_text):
+    """Анализирует контекст через OpenAI"""
+    import openai
+    openai.api_key = OPENAI_API_KEY
     
-    params = {
-        "jql": jql,
-        "maxResults": max_results
-    }
+    prompt = f"""Проанализируй переписку и создай задачу для Jira.
+
+Переписка:
+{context_text}
+
+Верни JSON:
+{{
+  "title": "Краткий заголовок задачи (до 80 символов)",
+  "description": "Подробное описание задачи"
+}}"""
     
-    response = requests.get(
-        url,
-        params=params,
-        auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
-        headers={"Accept": "application/json"}
+    response = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Ты помощник для создания задач в Jira."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.3
     )
     
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"Jira API error: {response.status_code} - {response.text}")
-
-# Настройки
-CONFIG = {
-    "emoji": "🙏",
-    "context_messages": 15,
-    "default_assignee": None,
-    "default_priority": "Medium",
-    "labels": ["telegram-bot", "auto-created"]
-}
+    content = response.choices[0].message.content
+    
+    # Извлекаем JSON
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0].strip()
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0].strip()
+    
+    return json.loads(content)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start"""
     await update.message.reply_text(
         f"✅ Бот активен!\n\n"
         f"Поставь {CONFIG['emoji']} на сообщение → создам задачу в Jira\n"
-        f"Проект: {JIRA_PROJECT_KEY}\n"
-        f"Анализирую последние {CONFIG['context_messages']} сообщений"
+        f"Проект: {JIRA_PROJECT_KEY}"
     )
 
-async def set_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /setemoji для смены эмодзи"""
-    if not context.args:
-        await update.message.reply_text(f"Текущий эмодзи: {CONFIG['emoji']}\nИспользуй: /setemoji 🔥")
-        return
-    
-    CONFIG["emoji"] = context.args[0]
-    await update.message.reply_text(f"✅ Эмодзи изменен на {CONFIG['emoji']}")
-
 async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка реакций на сообщения"""
-    
+    """Обработка реакций"""
     if not update.message_reaction:
         return
     
@@ -103,52 +97,36 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = reaction.chat.id
     message_id = reaction.message_id
     
-    # Проверяем нужную реакцию
+    # Проверяем эмодзи
     new_reactions = [r.emoji for r in reaction.new_reaction if hasattr(r, 'emoji')]
     if CONFIG["emoji"] not in new_reactions:
         return
     
     try:
-        # Собираем контекст - упрощенная версия
-        messages = []
-        
-        # Получаем информацию о реагировавшем пользователе
         user = reaction.user
         username = user.username or user.first_name
         
-        # Отправляем "думаю..."
+        # Отправляем статус
         thinking_msg = await context.bot.send_message(
             chat_id=chat_id,
             text="🤔 Анализирую задачу...",
             reply_to_message_id=message_id
         )
         
-        # Простой промпт для создания задачи
-        prompt = """Создай задачу для Jira на основе того, что пользователь отметил реакцией.
-
-Верни JSON:
-{
-  "title": "Краткий заголовок задачи",
-  "description": "Описание задачи"
-}"""
-
-        response = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Ты помощник для создания задач в Jira."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
+        # Упрощенный вариант - берем текст из сообщения на которое поставили реакцию
+        try:
+            original_msg = await context.bot.forward_message(
+                chat_id=chat_id,
+                from_chat_id=chat_id,
+                message_id=message_id
+            )
+            context_text = original_msg.text or "Задача из Telegram"
+            await context.bot.delete_message(chat_id, original_msg.message_id)
+        except:
+            context_text = "Задача из Telegram"
         
-        # Парсим ответ
-        content = response.choices[0].message.content
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-        
-        task_data = json.loads(content)
+        # Анализируем через OpenAI
+        task_data = analyze_with_openai(context_text)
         
         # Формируем описание
         description = f"""{task_data['description']}
@@ -157,15 +135,11 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Создано из Telegram
 Инициатор: {username}
 Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Контекст: {context_text[:500]}
 """
         
-        # Создаем задачу в Jira
-        issue = create_jira_issue(
-            summary=task_data['title'][:250],
-            description=description,
-            labels=CONFIG['labels']
-        )
-        
+        # Создаем задачу
+        issue = create_jira_task(task_data['title'], description)
         issue_key = issue['key']
         
         # Обновляем сообщение
@@ -178,12 +152,6 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             disable_web_page_preview=True
         )
         
-    except json.JSONDecodeError as e:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ Ошибка парсинга",
-            reply_to_message_id=message_id
-        )
     except Exception as e:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -191,33 +159,10 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=message_id
         )
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Статистика созданных задач"""
-    try:
-        jql = f'project = {JIRA_PROJECT_KEY} AND labels = "telegram-bot" AND created >= -30d ORDER BY created DESC'
-        result = search_jira_issues(jql, max_results=50)
-        issues = result.get('issues', [])
-        
-        stats_text = f"📊 Статистика за 30 дней\n\n"
-        stats_text += f"Создано задач: {len(issues)}\n\n"
-        
-        if issues:
-            stats_text += "Последние 5 задач:\n"
-            for issue in issues[:5]:
-                key = issue['key']
-                summary = issue['fields']['summary']
-                stats_text += f"• {key} - {summary[:50]}...\n"
-        
-        await update.message.reply_text(stats_text)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setemoji", set_emoji))
-    app.add_handler(CommandHandler("stats", stats))
     
     # Обработчик реакций
     from telegram.ext import MessageReactionHandler
