@@ -19,7 +19,8 @@ openai.api_key = OPENAI_API_KEY
 
 # Jira client - инициализируется при использовании
 def get_jira():
-    return JIRA(server=JIRA_URL, basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN))
+    options = {'server': JIRA_URL}
+    return JIRA(options=options, basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN))
 
 # Настройки
 CONFIG = {
