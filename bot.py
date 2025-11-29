@@ -14,9 +14,12 @@ JIRA_API_TOKEN = "O7BuudbDG1iVFWBDaZmW"
 JIRA_PROJECT_KEY = "DEV"
 OPENAI_API_KEY = "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"
 
-# Jira & OpenAI
-jira = JIRA(server=JIRA_URL, basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN))
+# OpenAI
 openai.api_key = OPENAI_API_KEY
+
+# Jira client - инициализируется при использовании
+def get_jira():
+    return JIRA(server=JIRA_URL, basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN))
 
 # Настройки
 CONFIG = {
@@ -120,6 +123,7 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'labels': CONFIG['labels']
         }
         
+        jira = get_jira()
         issue = jira.create_issue(fields=issue_dict)
         
         # Обновляем сообщение
@@ -148,6 +152,7 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика созданных задач"""
     try:
+        jira = get_jira()
         jql = f'project = {JIRA_PROJECT_KEY} AND labels = "telegram-bot" AND created >= -30d ORDER BY created DESC'
         issues = jira.search_issues(jql, maxResults=50)
         
