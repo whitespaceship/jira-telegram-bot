@@ -2,7 +2,8 @@ import os
 import json
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
-from jira import JIRA
+import requests
+from requests.auth import HTTPBasicAuth
 import openai
 from datetime import datetime
 
@@ -17,10 +18,53 @@ OPENAI_API_KEY = "sk-proj-kxeyHPFHMBb_vjkjE-UKrG1oBpgQpNtSDrVEj6V75j2YeQh88EbAHm
 # OpenAI
 openai.api_key = OPENAI_API_KEY
 
-# Jira client - инициализируется при использовании
-def get_jira():
-    options = {'server': JIRA_URL}
-    return JIRA(options=options, basic_auth=(JIRA_EMAIL, JIRA_API_TOKEN))
+# Jira API helper
+def create_jira_issue(summary, description, labels):
+    """Создает задачу в Jira через REST API"""
+    url = f"{JIRA_URL}/rest/api/2/issue"
+    
+    payload = {
+        "fields": {
+            "project": {"key": JIRA_PROJECT_KEY},
+            "summary": summary,
+            "description": description,
+            "issuetype": {"name": "Task"},
+            "labels": labels
+        }
+    }
+    
+    response = requests.post(
+        url,
+        json=payload,
+        auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
+        headers={"Content-Type": "application/json"}
+    )
+    
+    if response.status_code == 201:
+        return response.json()
+    else:
+        raise Exception(f"Jira API error: {response.status_code} - {response.text}")
+
+def search_jira_issues(jql, max_results=50):
+    """Поиск задач в Jira"""
+    url = f"{JIRA_URL}/rest/api/2/search"
+    
+    params = {
+        "jql": jql,
+        "maxResults": max_results
+    }
+    
+    response = requests.get(
+        url,
+        params=params,
+        auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
+        headers={"Accept": "application/json"}
+    )
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Jira API error: {response.status_code} - {response.text}")
 
 # Настройки
 CONFIG = {
@@ -116,16 +160,13 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
         
         # Создаем задачу в Jira
-        issue_dict = {
-            'project': JIRA_PROJECT_KEY,
-            'summary': task_data['title'][:250],
-            'description': description,
-            'issuetype': {'name': 'Task'},
-            'labels': CONFIG['labels']
-        }
+        issue = create_jira_issue(
+            summary=task_data['title'][:250],
+            description=description,
+            labels=CONFIG['labels']
+        )
         
-        jira = get_jira()
-        issue = jira.create_issue(fields=issue_dict)
+        issue_key = issue['key']
         
         # Обновляем сообщение
         await context.bot.edit_message_text(
@@ -133,7 +174,7 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=thinking_msg.message_id,
             text=f"✅ Задача создана!\n\n"
                  f"{task_data['title']}\n\n"
-                 f"🔗 {JIRA_URL}/browse/{issue.key}",
+                 f"🔗 {JIRA_URL}/browse/{issue_key}",
             disable_web_page_preview=True
         )
         
@@ -153,9 +194,9 @@ async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика созданных задач"""
     try:
-        jira = get_jira()
         jql = f'project = {JIRA_PROJECT_KEY} AND labels = "telegram-bot" AND created >= -30d ORDER BY created DESC'
-        issues = jira.search_issues(jql, maxResults=50)
+        result = search_jira_issues(jql, max_results=50)
+        issues = result.get('issues', [])
         
         stats_text = f"📊 Статистика за 30 дней\n\n"
         stats_text += f"Создано задач: {len(issues)}\n\n"
@@ -163,7 +204,9 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if issues:
             stats_text += "Последние 5 задач:\n"
             for issue in issues[:5]:
-                stats_text += f"• {issue.key} - {issue.fields.summary[:50]}...\n"
+                key = issue['key']
+                summary = issue['fields']['summary']
+                stats_text += f"• {key} - {summary[:50]}...\n"
         
         await update.message.reply_text(stats_text)
     except Exception as e:
