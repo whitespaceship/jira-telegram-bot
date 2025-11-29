@@ -1,175 +1,215 @@
 import os
-import json
+import logging
 import requests
-from requests.auth import HTTPBasicAuth
+from dotenv import load_dotenv
+
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-from datetime import datetime
+from telegram.ext import (
+    ApplicationBuilder,
+    ContextTypes,
+    MessageHandler,
+    MessageReactionHandler,
+    CommandHandler,
+    filters
+)
 
-# Config
-TELEGRAM_TOKEN = "7835188720:AAG6GU32WREM24CvwheJxeJz7tDpKcWO2y0"
-JIRA_URL = "https://overchat.atlassian.net"
-JIRA_EMAIL = "k@overchat.ai"
-JIRA_API_TOKEN = "ATATT3xFfGF01hoPH3EGiD3DYzynu9PHtezlK3XvqJQflqVFtzYYQSU97fvPfOowD8RNTux0O3Y3NGY1KXxLjEXULixqWGcrrhp6cSSuSSesX93OLMWhHpRPO_7f19subcYW2wWZRe3qoybqDSKPtWxT0pHQwWT9t6WwM-RcniMQJkysN3K2YUQ=924E1184"
-JIRA_PROJECT_KEY = "DEV"
-OPENAI_API_KEY = "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"
+# -----------------------------------------
+# ЗАГРУЖАЕМ ПЕРЕМЕННЫЕ
+# -----------------------------------------
 
-CONFIG = {
-    "emoji": "🙏",
-    "labels": ["telegram-bot", "auto-created"]
-}
+load_dotenv()
 
-def create_jira_task(title, description):
-    """Создает задачу в Jira через REST API"""
-    url = f"{JIRA_URL}/rest/api/2/issue"
-    
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
+TRIGGER_EMOJI = os.getenv("TRIGGER_EMOJI", "🙏")
+
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+
+JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
+JIRA_EMAIL = os.getenv("JIRA_EMAIL")
+JIRA_TOKEN = os.getenv("JIRA_TOKEN")
+JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "DEV")
+
+
+# -----------------------------------------
+# ЛОГИ
+# -----------------------------------------
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# хранение истории сообщений (в памяти)
+history = []
+
+
+# -----------------------------------------
+# ФУНКЦИИ JIRA
+# -----------------------------------------
+
+def create_jira_issue(summary: str, description: str):
+    url = f"{JIRA_BASE_URL}/rest/api/3/issue"
+
     payload = {
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
-            "summary": title[:250],
+            "summary": summary[:254],
             "description": description,
-            "issuetype": {"name": "Task"},
-            "labels": CONFIG["labels"]
+            "issuetype": {"name": "Task"}
         }
     }
-    
+
     response = requests.post(
         url,
         json=payload,
-        auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
-        headers={"Content-Type": "application/json"}
+        auth=(JIRA_EMAIL, JIRA_TOKEN),
+        headers={"Content-Type": "application/json"},
+        timeout=20
     )
-    
-    if response.status_code == 201:
-        return response.json()
-    else:
-        raise Exception(f"Jira error {response.status_code}: {response.text}")
 
-def analyze_with_openai(context_text):
-    """Анализирует контекст через OpenAI"""
+    if response.status_code >= 300:
+        logger.error(f"Ошибка Jira: {response.text}")
+        return None
+
+    return response.json().get("key")
+
+
+# -----------------------------------------
+# GPT АНАЛИЗ СООБЩЕНИЙ
+# -----------------------------------------
+
+def build_task_text(messages):
+    if not OPENAI_KEY:
+        text = "\n".join(messages)
+        return text[:60], text  # summary, description
+
     import openai
-    openai.api_key = OPENAI_API_KEY
-    
-    prompt = f"""Проанализируй переписку и создай задачу для Jira.
+    openai.api_key = OPENAI_KEY
 
-Переписка:
-{context_text}
+    prompt = f"""
+Сделай задачу для Jira из этих сообщений. Верни JSON:
 
-Верни JSON:
 {{
-  "title": "Краткий заголовок задачи (до 80 символов)",
-  "description": "Подробное описание задачи"
-}}"""
-    
-    response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "Ты помощник для создания задач в Jira."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3
-    )
-    
-    content = response.choices[0].message.content
-    
-    # Извлекаем JSON
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-    
-    return json.loads(content)
+"title": "...",
+"description": "..."
+}}
+
+Сообщения:
+{chr(10).join(messages)}
+"""
+
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=300
+        )
+
+        import json
+        data = json.loads(response.choices[0].message.content)
+
+        return data.get("title", "Task"), data.get("description", "")
+    except Exception as e:
+        logger.error(f"OpenAI error: {e}")
+        text = "\n".join(messages)
+        return text[:60], text
+
+
+# -----------------------------------------
+# ОБРАБОТЧИКИ СОБЫТИЙ TELEGRAM
+# -----------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start"""
-    await update.message.reply_text(
-        f"✅ Бот активен!\n\n"
-        f"Поставь {CONFIG['emoji']} на сообщение → создам задачу в Jira\n"
-        f"Проект: {JIRA_PROJECT_KEY}"
-    )
+    await update.message.reply_text("Бот работает.")
 
-async def handle_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка реакций"""
-    if not update.message_reaction:
-        return
-    
-    reaction = update.message_reaction
-    chat_id = reaction.chat.id
-    message_id = reaction.message_id
-    
-    # Проверяем эмодзи
-    new_reactions = [r.emoji for r in reaction.new_reaction if hasattr(r, 'emoji')]
-    if CONFIG["emoji"] not in new_reactions:
-        return
-    
-    try:
-        user = reaction.user
-        username = user.username or user.first_name
-        
-        # Отправляем статус
-        thinking_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text="🤔 Анализирую задачу...",
-            reply_to_message_id=message_id
-        )
-        
-        # Упрощенный вариант - берем текст из сообщения на которое поставили реакцию
-        try:
-            original_msg = await context.bot.forward_message(
-                chat_id=chat_id,
-                from_chat_id=chat_id,
-                message_id=message_id
-            )
-            context_text = original_msg.text or "Задача из Telegram"
-            await context.bot.delete_message(chat_id, original_msg.message_id)
-        except:
-            context_text = "Задача из Telegram"
-        
-        # Анализируем через OpenAI
-        task_data = analyze_with_openai(context_text)
-        
-        # Формируем описание
-        description = f"""{task_data['description']}
 
----
-Создано из Telegram
-Инициатор: {username}
-Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}
-Контекст: {context_text[:500]}
-"""
-        
-        # Создаем задачу
-        issue = create_jira_task(task_data['title'], description)
-        issue_key = issue['key']
-        
-        # Обновляем сообщение
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=thinking_msg.message_id,
-            text=f"✅ Задача создана!\n\n"
-                 f"{task_data['title']}\n\n"
-                 f"🔗 {JIRA_URL}/browse/{issue_key}",
-            disable_web_page_preview=True
-        )
-        
-    except Exception as e:
+async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    chat_id = msg.chat_id
+
+    if chat_id != TELEGRAM_CHAT_ID:
+        return
+
+    # сохраняем последние 100 сообщений
+    history.append(msg)
+    if len(history) > 100:
+        history.pop(0)
+
+
+async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    react = update.message_reaction
+    if react is None:
+        return
+
+    if react.chat.id != TELEGRAM_CHAT_ID:
+        return
+
+    new_emojis = [r.emoji for r in react.new_reaction or []]
+    if TRIGGER_EMOJI not in new_emojis:
+        return
+
+    msg_id = react.message_id
+
+    # ищем сообщение по ID
+    target = None
+    for msg in history:
+        if msg.message_id == msg_id:
+            target = msg
+            break
+
+    if not target:
         await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ Ошибка: {str(e)}",
-            reply_to_message_id=message_id
+            TELEGRAM_CHAT_ID,
+            "Не нашел сообщение. Бот не видел историю.",
         )
+        return
+
+    # берем 3 предыдущих + текущее
+    idx = history.index(target)
+    msgs = history[max(0, idx - 3): idx + 1]
+
+    texts = []
+    for m in msgs:
+        if m.text:
+            texts.append(m.text)
+
+    summary, description = build_task_text(texts)
+    key = create_jira_issue(summary, description)
+
+    if key:
+        await context.bot.send_message(
+            TELEGRAM_CHAT_ID,
+            f"Создана задача: {key}",
+            reply_to_message_id=msg_id
+        )
+    else:
+        await context.bot.send_message(
+            TELEGRAM_CHAT_ID,
+            "Ошибка Jira",
+            reply_to_message_id=msg_id
+        )
+
+
+# -----------------------------------------
+# СТАРТ БОТА
+# -----------------------------------------
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError("Нет TELEGRAM_TOKEN в .env")
+
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
-    
-    # Обработчик реакций
-    from telegram.ext import MessageReactionHandler
-    app.add_handler(MessageReactionHandler(handle_reaction))
-    
-    print(f"🤖 Бот запущен. Эмодзи: {CONFIG['emoji']}, Проект: {JIRA_PROJECT_KEY}")
+
+    # ловим все сообщения
+    app.add_handler(MessageHandler(filters.ALL, save_message))
+
+    # ловим реакции
+    app.add_handler(MessageReactionHandler(reaction))
+
     app.run_polling(allowed_updates=["message", "message_reaction"])
+
 
 if __name__ == "__main__":
     main()
