@@ -170,10 +170,9 @@ def main():
     app.add_handler(CommandHandler("setemoji", set_emoji))
     app.add_handler(CommandHandler("stats", stats))
     
-    app.add_handler(MessageHandler(
-        filters.UpdateType.MESSAGE_REACTION, 
-        handle_reaction
-    ))
+    # Обработчик реакций
+    from telegram.ext import MessageReactionHandler
+    app.add_handler(MessageReactionHandler(handle_reaction))
     
     print(f"🤖 Бот запущен. Эмодзи: {CONFIG['emoji']}, Проект: {JIRA_PROJECT_KEY}")
     app.run_polling(allowed_updates=["message", "message_reaction"])
