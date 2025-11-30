@@ -76,8 +76,8 @@ def build_task_text(messages):
         text = "\n".join(messages)
         return text[:60], text
 
-    import openai
-    openai.api_key = OPENAI_KEY
+from openai import OpenAI
+client = OpenAI(api_key=OPENAI_KEY)
 
     prompt = f"""Сделай задачу для Jira из этих сообщений. Верни JSON:
 
@@ -91,12 +91,12 @@ def build_task_text(messages):
 """
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            max_tokens=300
-        )
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": prompt}],
+    response_format={"type": "json_object"},
+    max_tokens=300
+)
 
         import json
         data = json.loads(response.choices[0].message.content)
