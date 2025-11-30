@@ -1,7 +1,6 @@
 import os
 import logging
 import requests
-from dotenv import load_dotenv
 
 from telegram import Update
 from telegram.ext import (
@@ -14,22 +13,19 @@ from telegram.ext import (
 )
 
 # -----------------------------------------
-# ЗАГРУЖАЕМ ПЕРЕМЕННЫЕ
+# КОНФИГУРАЦИЯ
 # -----------------------------------------
 
-load_dotenv()
+TELEGRAM_TOKEN = "7835188720:AAG6GU32WREM24CvwheJxeJz7tDpKcWO2y0"
+TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
+TRIGGER_EMOJI = "🙏"
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
-TRIGGER_EMOJI = os.getenv("TRIGGER_EMOJI", "🙏")
+OPENAI_KEY = "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"
 
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-
-JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
-JIRA_EMAIL = os.getenv("JIRA_EMAIL")
-JIRA_TOKEN = os.getenv("JIRA_TOKEN")
-JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "DEV")
-
+JIRA_BASE_URL = "https://overchat.atlassian.net"
+JIRA_EMAIL = "k@overchat.ai"
+JIRA_TOKEN = "ATATT3xFfGF01hoPH3EGiD3DYzynu9PHtezlK3XvqJQflqVFtzYYQSU97fvPfOowD8RNTux0O3Y3NGY1KXxLjEXULixqWGcrrhp6cSSuSSesX93OLMWhHpRPO_7f19subcYW2wWZRe3qoybqDSKPtWxT0pHQwWT9t6WwM-RcniMQJkysN3K2YUQ=924E1184"
+JIRA_PROJECT_KEY = "DEV"
 
 # -----------------------------------------
 # ЛОГИ
@@ -40,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 # хранение истории сообщений (в памяти)
 history = []
-
 
 # -----------------------------------------
 # ФУНКЦИИ JIRA
@@ -53,7 +48,21 @@ def create_jira_issue(summary: str, description: str):
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
             "summary": summary[:254],
-            "description": description,
+            "description": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": description
+                            }
+                        ]
+                    }
+                ]
+            },
             "issuetype": {"name": "Task"}
         }
     }
@@ -72,7 +81,6 @@ def create_jira_issue(summary: str, description: str):
 
     return response.json().get("key")
 
-
 # -----------------------------------------
 # GPT АНАЛИЗ СООБЩЕНИЙ
 # -----------------------------------------
@@ -80,13 +88,12 @@ def create_jira_issue(summary: str, description: str):
 def build_task_text(messages):
     if not OPENAI_KEY:
         text = "\n".join(messages)
-        return text[:60], text  # summary, description
+        return text[:60], text
 
     import openai
     openai.api_key = OPENAI_KEY
 
-    prompt = f"""
-Сделай задачу для Jira из этих сообщений. Верни JSON:
+    prompt = f"""Сделай задачу для Jira из этих сообщений. Верни JSON:
 
 {{
 "title": "...",
@@ -99,7 +106,7 @@ def build_task_text(messages):
 
     try:
         response = openai.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             max_tokens=300
@@ -114,34 +121,30 @@ def build_task_text(messages):
         text = "\n".join(messages)
         return text[:60], text
 
-
 # -----------------------------------------
 # ОБРАБОТЧИКИ СОБЫТИЙ TELEGRAM
 # -----------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот работает.")
-
+    await update.message.reply_text("✅ Бот работает! Поставь 🙏 на сообщение для создания задачи.")
 
 async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat_id = msg.chat_id
 
-    if chat_id != TELEGRAM_CHAT_ID:
+    if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
         return
 
-    # сохраняем последние 100 сообщений
     history.append(msg)
     if len(history) > 100:
         history.pop(0)
-
 
 async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     react = update.message_reaction
     if react is None:
         return
 
-    if react.chat.id != TELEGRAM_CHAT_ID:
+    if TELEGRAM_CHAT_ID and react.chat.id != TELEGRAM_CHAT_ID:
         return
 
     new_emojis = [r.emoji for r in react.new_reaction or []]
@@ -149,6 +152,7 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     msg_id = react.message_id
+    chat_id = react.chat.id
 
     # ищем сообщение по ID
     target = None
@@ -159,10 +163,16 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not target:
         await context.bot.send_message(
-            TELEGRAM_CHAT_ID,
-            "Не нашел сообщение. Бот не видел историю.",
+            chat_id,
+            "❌ Не нашел сообщение. Бот не видел историю.",
         )
         return
+
+    thinking_msg = await context.bot.send_message(
+        chat_id,
+        "🤔 Создаю задачу...",
+        reply_to_message_id=msg_id
+    )
 
     # берем 3 предыдущих + текущее
     idx = history.index(target)
@@ -173,22 +183,29 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if m.text:
             texts.append(m.text)
 
+    if not texts:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=thinking_msg.message_id,
+            text="❌ Нет текста для анализа"
+        )
+        return
+
     summary, description = build_task_text(texts)
     key = create_jira_issue(summary, description)
 
     if key:
-        await context.bot.send_message(
-            TELEGRAM_CHAT_ID,
-            f"Создана задача: {key}",
-            reply_to_message_id=msg_id
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=thinking_msg.message_id,
+            text=f"✅ Задача создана!\n\n🔗 {JIRA_BASE_URL}/browse/{key}"
         )
     else:
-        await context.bot.send_message(
-            TELEGRAM_CHAT_ID,
-            "Ошибка Jira",
-            reply_to_message_id=msg_id
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=thinking_msg.message_id,
+            text="❌ Ошибка при создании в Jira. Проверь логи Railway."
         )
-
 
 # -----------------------------------------
 # СТАРТ БОТА
@@ -196,20 +213,16 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TELEGRAM_TOKEN:
-        raise RuntimeError("Нет TELEGRAM_TOKEN в .env")
+        raise RuntimeError("Нет TELEGRAM_TOKEN")
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-
-    # ловим все сообщения
     app.add_handler(MessageHandler(filters.ALL, save_message))
-
-    # ловим реакции
     app.add_handler(MessageReactionHandler(reaction))
 
+    logger.info(f"🤖 Бот запущен! Эмодзи: {TRIGGER_EMOJI}, Проект: {JIRA_PROJECT_KEY}")
     app.run_polling(allowed_updates=["message", "message_reaction"])
-
 
 if __name__ == "__main__":
     main()
