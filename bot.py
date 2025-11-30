@@ -24,7 +24,7 @@ OPENAI_KEY = "sk-proj-kxeyHPFHMBb_vjkjE-UKrG1oBpgQpNtSDrVEj6V75j2YeQh88EbAHmqKHD
 
 JIRA_BASE_URL = "https://overchat.atlassian.net"
 JIRA_EMAIL = "k@overchat.ai"
-JIRA_TOKEN = "ATATT3xFfGF01hoPH3EGiD3DYzynu9PHtezlK3XvqJQflqVFtzYYQSU97fvPfOowD8RNTux0O3Y3NGY1KXxLjEXULixqWGcrrhp6cSSuSSesX93OLMWhHpRPO_7f19subcYW2wWZRe3qoybqDSKPtWxT0pHQwWT9t6WwM-RcniMQJkysN3K2YUQ=924E1184"
+JIRA_TOKEN = "ATATT3xFfGF0TCz_YjaObgoudN3eQ4nDGuA4SrgVo6jPBpaTDyX_-dxKZqG4RQt6qw0OB2tAAknVlaC2-so2gznCTvj0p75nh7ET3dfNu1yeDU9lGm1Zqs_IOSKShobO4DjMd9HXWYYszJr2V4nLaKY-VAE04VwYdwfOwUiICUOG1_F_EvqYax0=1BC22F7A"
 JIRA_PROJECT_KEY = "DEV"
 
 # -----------------------------------------
@@ -42,27 +42,13 @@ history = []
 # -----------------------------------------
 
 def create_jira_issue(summary: str, description: str):
-    url = f"{JIRA_BASE_URL}/rest/api/3/issue"
+    url = f"{JIRA_BASE_URL}/rest/api/2/issue"
 
     payload = {
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
             "summary": summary[:254],
-            "description": {
-                "type": "doc",
-                "version": 1,
-                "content": [
-                    {
-                        "type": "paragraph",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": description
-                            }
-                        ]
-                    }
-                ]
-            },
+            "description": description,
             "issuetype": {"name": "Task"}
         }
     }
