@@ -20,7 +20,7 @@ TELEGRAM_TOKEN = "7835188720:AAG6GU32WREM24CvwheJxeJz7tDpKcWO2y0"
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
 TRIGGER_EMOJI = "🙏"
 
-OPENAI_KEY = ""  # Отключено временно
+OPENAI_KEY = ""  # Отключено - Railway кэширует старый SDK
 
 JIRA_BASE_URL = "https://overchat.atlassian.net"
 JIRA_EMAIL = "k@overchat.ai"
@@ -31,7 +31,10 @@ JIRA_PROJECT_KEY = "DEV"
 # ЛОГИ
 # -----------------------------------------
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # хранение истории сообщений (в памяти)
@@ -42,66 +45,110 @@ history = []
 # -----------------------------------------
 
 def create_jira_issue(summary: str, description: str):
-    url = f"{JIRA_BASE_URL}/rest/api/2/issue"
+    """Создает задачу в Jira через REST API v3 с ADF форматом"""
+    url = f"{JIRA_BASE_URL}/rest/api/3/issue"
+
+    # Atlassian Document Format (ADF) - как у Claude
+    adf_description = {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": description
+                    }
+                ]
+            }
+        ]
+    }
 
     payload = {
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
             "summary": summary[:254],
-            "description": description,
+            "description": adf_description,
             "issuetype": {"name": "Task"}
         }
     }
 
-    response = requests.post(
-        url,
-        json=payload,
-        auth=(JIRA_EMAIL, JIRA_TOKEN),
-        headers={"Content-Type": "application/json"},
-        timeout=20
-    )
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            auth=(JIRA_EMAIL, JIRA_TOKEN),
+            headers={"Content-Type": "application/json"},
+            timeout=20
+        )
 
-    if response.status_code >= 300:
-        logger.error(f"Ошибка Jira: {response.text}")
+        if response.status_code >= 300:
+            logger.error(f"Jira API error [{response.status_code}]: {response.text}")
+            return None
+
+        data = response.json()
+        logger.info(f"Jira task created: {data.get('key')}")
+        return data.get("key")
+        
+    except Exception as e:
+        logger.error(f"Jira request failed: {e}")
         return None
 
-    return response.json().get("key")
-
 # -----------------------------------------
-# GPT АНАЛИЗ СООБЩЕНИЙ
+# GPT АНАЛИЗ СООБЩЕНИЙ (отключен)
 # -----------------------------------------
 
 def build_task_text(messages):
-    # OpenAI отключен - просто берем текст
+    """Формирует текст задачи из сообщений. OpenAI отключен."""
     text = "\n".join(messages)
-    return text[:60], text
+    # Первая строка = summary, все = description
+    title = text.split('\n')[0][:60] if text else "New task"
+    return title, text
 
 # -----------------------------------------
 # ОБРАБОТЧИКИ СОБЫТИЙ TELEGRAM
 # -----------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Бот работает! Поставь 🙏 на сообщение для создания задачи.")
+    """Команда /start"""
+    await update.message.reply_text(
+        "✅ Бот работает!\n\n"
+        f"Поставь {TRIGGER_EMOJI} на сообщение для создания задачи в Jira.\n"
+        f"Проект: {JIRA_PROJECT_KEY}"
+    )
 
 async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет все сообщения в историю"""
     msg = update.effective_message
+    if not msg:
+        return
+        
     chat_id = msg.chat_id
 
+    # Фильтр по чату (если задан)
     if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
         return
 
     history.append(msg)
+    
+    # Лимит истории
     if len(history) > 100:
         history.pop(0)
+    
+    logger.debug(f"Message saved: {msg.message_id} from {chat_id}")
 
 async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает реакции на сообщения"""
     react = update.message_reaction
     if react is None:
         return
 
+    # Фильтр по чату
     if TELEGRAM_CHAT_ID and react.chat.id != TELEGRAM_CHAT_ID:
         return
 
+    # Проверяем что добавлен нужный эмодзи
     new_emojis = [r.emoji for r in react.new_reaction or []]
     if TRIGGER_EMOJI not in new_emojis:
         return
@@ -109,7 +156,9 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_id = react.message_id
     chat_id = react.chat.id
 
-    # ищем сообщение по ID
+    logger.info(f"Reaction {TRIGGER_EMOJI} detected on message {msg_id}")
+
+    # Ищем сообщение в истории
     target = None
     for msg in history:
         if msg.message_id == msg_id:
@@ -117,49 +166,60 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
     if not target:
+        logger.warning(f"Message {msg_id} not found in history")
         await context.bot.send_message(
             chat_id,
-            "❌ Не нашел сообщение. Бот не видел историю.",
+            "❌ Сообщение не найдено в истории бота.\n"
+            "Бот должен видеть сообщения до реакции."
         )
         return
 
+    # Отправляем "думаем..."
     thinking_msg = await context.bot.send_message(
         chat_id,
-        "🤔 Создаю задачу...",
+        "🤔 Создаю задачу в Jira...",
         reply_to_message_id=msg_id
     )
 
-    # берем 3 предыдущих + текущее
+    # Берем контекст: 3 предыдущих + текущее
     idx = history.index(target)
-    msgs = history[max(0, idx - 3): idx + 1]
+    context_msgs = history[max(0, idx - 3): idx + 1]
 
+    # Извлекаем текст
     texts = []
-    for m in msgs:
+    for m in context_msgs:
         if m.text:
             texts.append(m.text)
 
     if not texts:
+        logger.warning("No text found in messages")
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
-            text="❌ Нет текста для анализа"
+            text="❌ Нет текста для создания задачи"
         )
         return
 
+    # Формируем задачу
     summary, description = build_task_text(texts)
+    
+    # Создаем в Jira
     key = create_jira_issue(summary, description)
 
     if key:
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
-            text=f"✅ Задача создана!\n\n🔗 {JIRA_BASE_URL}/browse/{key}"
+            text=f"✅ Задача создана!\n\n"
+                 f"🔗 {JIRA_BASE_URL}/browse/{key}\n\n"
+                 f"📝 {summary}"
         )
     else:
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
-            text="❌ Ошибка при создании в Jira. Проверь логи Railway."
+            text="❌ Ошибка при создании задачи в Jira.\n"
+                 "Проверь логи Railway или права доступа."
         )
 
 # -----------------------------------------
@@ -167,17 +227,29 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------------------
 
 def main():
+    """Запуск бота"""
     if not TELEGRAM_TOKEN:
-        raise RuntimeError("Нет TELEGRAM_TOKEN")
+        raise RuntimeError("TELEGRAM_TOKEN не установлен")
 
+    logger.info("Initializing bot...")
+    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # Регистрируем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.ALL, save_message))
     app.add_handler(MessageReactionHandler(reaction))
 
-    logger.info(f"🤖 Бот запущен! Эмодзи: {TRIGGER_EMOJI}, Проект: {JIRA_PROJECT_KEY}")
-    app.run_polling(allowed_updates=["message", "message_reaction"])
+    logger.info(f"🤖 Бот запущен!")
+    logger.info(f"📌 Эмодзи: {TRIGGER_EMOJI}")
+    logger.info(f"📁 Проект Jira: {JIRA_PROJECT_KEY}")
+    logger.info(f"🔗 {JIRA_BASE_URL}")
+    
+    # Запускаем polling
+    app.run_polling(
+        allowed_updates=["message", "message_reaction"],
+        drop_pending_updates=True  # Игнорируем старые обновления
+    )
 
 if __name__ == "__main__":
     main()
