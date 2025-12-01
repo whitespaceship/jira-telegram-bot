@@ -22,7 +22,7 @@ TRIGGER_EMOJI = "🙏"
 
 OPENAI_KEY = ""  # Отключено - Railway кэширует старый SDK
 
-JIRA_BASE_URL = "https://overchat.atlassian.net"
+JIRA_BASE_URL = "https://api.atlassian.com/ex/jira/c03e3edd-51e4-4f26-a63e-449d0755d93c"
 JIRA_EMAIL = "k@overchat.ai"
 JIRA_TOKEN = "ATATT3xFfGF0qBJxxf6TKVL4A5Y-puIuUK8nl6MM_bo9TzqawbfTl-3GGG7iX-KafP1EXXVSEwDGicETrsVC4UzEhFQtY0cyJfwoDXcw0HwqFXzpK_loAS8Mw7phfYDfwDyuILZjbul_QZDenT5KI-1RJAE3bxEfcW06Gwz6FafIHKR0Ur09I-g=9F908EAA"
 JIRA_PROJECT_KEY = "DEV"
