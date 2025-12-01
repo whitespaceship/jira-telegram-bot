@@ -71,13 +71,13 @@ def create_jira_issue(summary: str, description: str):
 # GPT АНАЛИЗ СООБЩЕНИЙ
 # -----------------------------------------
 
-from openai import OpenAI
-client = OpenAI(api_key=OPENAI_KEY)
-
 def build_task_text(messages):
     if not OPENAI_KEY:
         text = "\n".join(messages)
         return text[:60], text
+
+    import openai
+    openai.api_key = OPENAI_KEY
 
     prompt = f"""Сделай задачу для Jira из этих сообщений. Верни JSON:
 
@@ -91,7 +91,7 @@ def build_task_text(messages):
 """
 
     try:
-        response = client.chat.completions.create(
+        response = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
