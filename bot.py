@@ -45,31 +45,14 @@ history = []
 # -----------------------------------------
 
 def create_jira_issue(summary: str, description: str):
-    """Создает задачу в Jira через REST API v3 с ADF форматом"""
-    url = f"{JIRA_BASE_URL}/rest/api/3/issue"
-
-    # Atlassian Document Format (ADF) - как у Claude
-    adf_description = {
-        "type": "doc",
-        "version": 1,
-        "content": [
-            {
-                "type": "paragraph",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": description
-                    }
-                ]
-            }
-        ]
-    }
+    """Создает задачу в Jira через REST API v2"""
+    url = f"{JIRA_BASE_URL}/rest/api/2/issue"
 
     payload = {
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
             "summary": summary[:254],
-            "description": adf_description,
+            "description": description,
             "issuetype": {"name": "Task"}
         }
     }
