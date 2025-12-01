@@ -20,11 +20,11 @@ TELEGRAM_TOKEN = "7835188720:AAG6GU32WREM24CvwheJxeJz7tDpKcWO2y0"
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
 TRIGGER_EMOJI = "🙏"
 
-OPENAI_KEY = "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"
+OPENAI_KEY = ""  # Отключено временно
 
 JIRA_BASE_URL = "https://overchat.atlassian.net"
 JIRA_EMAIL = "k@overchat.ai"
-JIRA_TOKEN = "ATATT3xFfGF0TCz_YjaObgoudN3eQ4nDGuA4SrgVo6jPBpaTDyX_-dxKZqG4RQt6qw0OB2tAAknVlaC2-so2gznCTvj0p75nh7ET3dfNu1yeDU9lGm1Zqs_IOSKShobO4DjMd9HXWYYszJr2V4nLaKY-VAE04VwYdwfOwUiICUOG1_F_EvqYax0=1BC22F7A"
+JIRA_TOKEN = "ATATT3xFfGF0eq0eoZgpRB98BeWSCckMmtc8YmHHNIa6lDIEFvGA570Benz5VS7vPUPBTx2NtnxnkatlwG-eEKVl0qBpoPqapXmSsZngh1g6bTeS1t3phiQix0ESwg_Dpco1GW7D6vSpWdKNAhrKqXDgKdmVYVUg9cnZS5JgumuM86atj0Nyqns=1EE27398"
 JIRA_PROJECT_KEY = "DEV"
 
 # -----------------------------------------
@@ -72,39 +72,9 @@ def create_jira_issue(summary: str, description: str):
 # -----------------------------------------
 
 def build_task_text(messages):
-    if not OPENAI_KEY:
-        text = "\n".join(messages)
-        return text[:60], text
-
-    from openai import OpenAI
-    
-    prompt = f"""Сделай задачу для Jira из этих сообщений. Верни JSON:
-
-{{
-"title": "...",
-"description": "..."
-}}
-
-Сообщения:
-{chr(10).join(messages)}
-"""
-
-    try:
-        client = OpenAI(api_key=OPENAI_KEY)
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            max_tokens=300
-        )
-
-        import json
-        data = json.loads(response.choices[0].message.content)
-        return data.get("title", "Task"), data.get("description", "")
-    except Exception as e:
-        logger.error(f"OpenAI error: {e}")
-        text = "\n".join(messages)
-        return text[:60], text
+    # OpenAI отключен - просто берем текст
+    text = "\n".join(messages)
+    return text[:60], text
 
 # -----------------------------------------
 # ОБРАБОТЧИКИ СОБЫТИЙ TELEGRAM
