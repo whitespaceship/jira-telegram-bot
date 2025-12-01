@@ -24,7 +24,7 @@ OPENAI_KEY = ""  # Отключено временно
 
 JIRA_BASE_URL = "https://overchat.atlassian.net"
 JIRA_EMAIL = "k@overchat.ai"
-JIRA_TOKEN = "ATATT3xFfGF0eq0eoZgpRB98BeWSCckMmtc8YmHHNIa6lDIEFvGA570Benz5VS7vPUPBTx2NtnxnkatlwG-eEKVl0qBpoPqapXmSsZngh1g6bTeS1t3phiQix0ESwg_Dpco1GW7D6vSpWdKNAhrKqXDgKdmVYVUg9cnZS5JgumuM86atj0Nyqns=1EE27398"
+JIRA_TOKEN = "ATATT3xFfGF0rv0jeLI01vHgEgatXybdBg6CaAjxq5ugeBpqI6K5qJKZ7hmXrYhuXXEKOpuHp54F2wo2hchWul_F-qDq5C0USb6V4WyQvlkpz0Zy_32EeA19pOBS1v4ymDFfcBN3sfZP7yxTofA4UJTgfKF2EvjQ0hnCny9-RurQzGjGokX1qOg=B156921B"
 JIRA_PROJECT_KEY = "DEV"
 
 # -----------------------------------------
