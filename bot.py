@@ -17,7 +17,10 @@ from telegram.ext import (
 # -----------------------------------------
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # можно оставить None в Railway
+
+raw_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_ID = int(raw_chat_id) if raw_chat_id else None
+
 TRIGGER_EMOJI = os.getenv("TRIGGER_EMOJI", "🙏")
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
