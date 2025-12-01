@@ -21,7 +21,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 raw_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 TELEGRAM_CHAT_ID = int(raw_chat_id) if raw_chat_id else None
 
-TRIGGER_EMOJI = os.getenv("TRIGGER_EMOJI", "🙏")
+TRIGGER_EMOJI = "🙏"
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 
