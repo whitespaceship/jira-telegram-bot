@@ -58,11 +58,16 @@ def create_jira_issue(summary: str, description: str):
     }
 
     try:
+        # Scoped токены используют Bearer auth, НЕ Basic!
+        headers = {
+            "Authorization": f"Bearer {JIRA_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
         response = requests.post(
             url,
             json=payload,
-            auth=(JIRA_EMAIL, JIRA_TOKEN),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             timeout=20
         )
 
