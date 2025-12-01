@@ -16,16 +16,16 @@ from telegram.ext import (
 # КОНФИГУРАЦИЯ
 # -----------------------------------------
 
-TELEGRAM_TOKEN = "7835188720:AAG6GU32WREM24CvwheJxeJz7tDpKcWO2y0"
-TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
-TRIGGER_EMOJI = "🙏"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # можно оставить None в Railway
+TRIGGER_EMOJI = os.getenv("TRIGGER_EMOJI", "🙏")
 
-OPENAI_KEY = ""  # Отключено - Railway кэширует старый SDK
+OPENAI_KEY = os.getenv("OPENAI_KEY")
 
-JIRA_BASE_URL = "https://overchat.atlassian.net"
-JIRA_EMAIL = "k@overchat.ai"
-JIRA_TOKEN = "ATATT3xFfGF0jBdjhqEmaSDXfbzEM9C4EOTG1IEj1msIs9Cfq7sEO_wP9ROeHr_U136w605DwfnCZ25Jl7CVPxR4gDSF69eJQGWS54wdNuPkpTJi8NNWof3ygiehT96e9UEr_K_92QALprwsQphGO8w42c_f24TaEMIs4iocMdzhi7BdMIx-bvk=78F535B8"
-JIRA_PROJECT_KEY = "DEV"
+JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://overchat.atlassian.net")
+JIRA_EMAIL = os.getenv("JIRA_EMAIL")
+JIRA_TOKEN = os.getenv("JIRA_TOKEN")
+JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "DEV")
 
 # -----------------------------------------
 # ЛОГИ
