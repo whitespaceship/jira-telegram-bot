@@ -24,7 +24,7 @@ OPENAI_KEY = ""  # Отключено - Railway кэширует старый SD
 
 JIRA_BASE_URL = "https://overchat.atlassian.net"
 JIRA_EMAIL = "k@overchat.ai"
-JIRA_TOKEN = "ATATT3xFfGF0rv0jeLI01vHgEgatXybdBg6CaAjxq5ugeBpqI6K5qJKZ7hmXrYhuXXEKOpuHp54F2wo2hchWul_F-qDq5C0USb6V4WyQvlkpz0Zy_32EeA19pOBS1v4ymDFfcBN3sfZP7yxTofA4UJTgfKF2EvjQ0hnCny9-RurQzGjGokX1qOg=B156921B"
+JIRA_TOKEN = "ATATT3xFfGF0qBJxxf6TKVL4A5Y-puIuUK8nl6MM_bo9TzqawbfTl-3GGG7iX-KafP1EXXVSEwDGicETrsVC4UzEhFQtY0cyJfwoDXcw0HwqFXzpK_loAS8Mw7phfYDfwDyuILZjbul_QZDenT5KI-1RJAE3bxEfcW06Gwz6FafIHKR0Ur09I-g=9F908EAA"
 JIRA_PROJECT_KEY = "DEV"
 
 # -----------------------------------------
