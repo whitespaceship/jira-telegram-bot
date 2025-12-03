@@ -16,7 +16,7 @@ from telegram.ext import (
 # КОНФИГУРАЦИЯ
 # -----------------------------------------
 
-TELEGRAM_TOKEN = "7835188720:AAG6GU32WREM24CvwheJxeJz7tDpKcWO2y0"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
 TRIGGER_EMOJI = "🙏"
 
@@ -48,6 +48,14 @@ def create_jira_issue(summary: str, description: str):
     """Создает задачу в Jira через REST API v2"""
     url = f"{JIRA_BASE_URL}/rest/api/2/issue"
 
+    # ДЕБАГ ЛОГИ
+    logger.info(f"=== JIRA REQUEST DEBUG ===")
+    logger.info(f"URL: {url}")
+    logger.info(f"Email: {JIRA_EMAIL}")
+    logger.info(f"Token starts: {JIRA_TOKEN[:20] if JIRA_TOKEN else 'MISSING'}...")
+    logger.info(f"Token ends: ...{JIRA_TOKEN[-10:] if JIRA_TOKEN else 'MISSING'}")
+    logger.info(f"Project: {JIRA_PROJECT_KEY}")
+
     payload = {
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
@@ -66,6 +74,8 @@ def create_jira_issue(summary: str, description: str):
             headers={"Content-Type": "application/json"},
             timeout=20
         )
+
+        logger.info(f"Response status: {response.status_code}")
 
         if response.status_code >= 300:
             logger.error(f"Jira API error [{response.status_code}]: {response.text}")
