@@ -20,9 +20,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
 TRIGGER_EMOJI = "🙏"
 
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_KEY = os.getenv("OPENAI_KEY")
 
-JIRA_BASE_URL = os.getenv("JIRA_URL", "https://overchat.atlassian.net")
+JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://overchat.atlassian.net")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN")
 JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "DEV")
@@ -76,6 +76,11 @@ def create_jira_issue(summary: str, description: str):
         )
 
         logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response headers: {dict(response.headers)}")
+        
+        # ПРОВЕРКА CAPTCHA
+        if 'x-seraph-loginreason' in response.headers:
+            logger.error(f"CAPTCHA TRIGGERED! x-seraph-loginreason: {response.headers['x-seraph-loginreason']}")
 
         if response.status_code >= 300:
             logger.error(f"Jira API error [{response.status_code}]: {response.text}")
@@ -225,7 +230,16 @@ def main():
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TELEGRAM_TOKEN не установлен")
 
-    logger.info("Initializing bot...")
+    logger.info("=" * 50)
+    logger.info("STARTUP ENVIRONMENT CHECK")
+    logger.info("=" * 50)
+    logger.info(f"TELEGRAM_TOKEN: {'SET' if TELEGRAM_TOKEN else 'MISSING'}")
+    logger.info(f"JIRA_BASE_URL: {JIRA_BASE_URL}")
+    logger.info(f"JIRA_EMAIL: {JIRA_EMAIL}")
+    logger.info(f"JIRA_TOKEN: {'SET (' + JIRA_TOKEN[:20] + '...' + JIRA_TOKEN[-10:] + ')' if JIRA_TOKEN else 'MISSING'}")
+    logger.info(f"JIRA_PROJECT_KEY: {JIRA_PROJECT_KEY}")
+    logger.info(f"OPENAI_KEY: {'SET' if OPENAI_KEY else 'MISSING'}")
+    logger.info("=" * 50)
     
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
