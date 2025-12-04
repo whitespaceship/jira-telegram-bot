@@ -20,9 +20,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
 TRIGGER_EMOJI = "🙏"
 
-OPENAI_KEY = os.getenv("OPENAI_KEY")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
-JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://overchat.atlassian.net")
+JIRA_BASE_URL = os.getenv("JIRA_URL", "https://overchat.atlassian.net")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN")
 JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "DEV")
