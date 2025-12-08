@@ -18,7 +18,7 @@ from telegram.ext import (
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
-TRIGGER_EMOJI = "🙏"
+TRIGGER_EMOJI = "🕊️"  # Голубь мира
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 
@@ -48,7 +48,6 @@ def create_jira_issue(summary: str, description: str):
     """Создает задачу в Jira через REST API v2"""
     url = f"{JIRA_BASE_URL}/rest/api/2/issue"
 
-    # ДЕБАГ ЛОГИ
     logger.info(f"=== JIRA REQUEST DEBUG ===")
     logger.info(f"URL: {url}")
     logger.info(f"Email: {JIRA_EMAIL}")
@@ -66,7 +65,6 @@ def create_jira_issue(summary: str, description: str):
     }
 
     try:
-        # Scoped токены используют Basic auth с api.atlassian.com URL
         response = requests.post(
             url,
             json=payload,
@@ -78,7 +76,6 @@ def create_jira_issue(summary: str, description: str):
         logger.info(f"Response status: {response.status_code}")
         logger.info(f"Response headers: {dict(response.headers)}")
         
-        # ПРОВЕРКА CAPTCHA
         if 'x-seraph-loginreason' in response.headers:
             logger.error(f"CAPTCHA TRIGGERED! x-seraph-loginreason: {response.headers['x-seraph-loginreason']}")
 
@@ -95,15 +92,41 @@ def create_jira_issue(summary: str, description: str):
         return None
 
 # -----------------------------------------
-# GPT АНАЛИЗ СООБЩЕНИЙ (отключен)
+# АНАЛИЗ И ФОРМАТИРОВАНИЕ ТЕКСТА
 # -----------------------------------------
 
-def build_task_text(messages):
-    """Формирует текст задачи из сообщений. OpenAI отключен."""
+def analyze_and_format(messages):
+    """Анализирует контекст и форматирует для Jira"""
     text = "\n".join(messages)
-    # Первая строка = summary, все = description
-    title = text.split('\n')[0][:60] if text else "New task"
-    return title, text
+    
+    # Определяем summary (первая строка или ключевая фраза)
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    if not lines:
+        return "Новая задача", "Нет описания"
+    
+    # Summary = первая строка, макс 60 символов
+    summary = lines[0][:60]
+    if len(lines[0]) > 60:
+        summary += "..."
+    
+    # Description = структурированное описание
+    description_parts = []
+    
+    # Добавляем все сообщения как контекст
+    description_parts.append("*Контекст из чата:*")
+    for i, msg in enumerate(messages, 1):
+        description_parts.append(f"\n{i}. {msg}")
+    
+    # Если есть детали, выделяем их
+    if len(lines) > 1:
+        description_parts.append("\n\n*Детали:*")
+        for line in lines[1:]:
+            description_parts.append(f"• {line}")
+    
+    description = "\n".join(description_parts)
+    
+    return summary, description
 
 # -----------------------------------------
 # ОБРАБОТЧИКИ СОБЫТИЙ TELEGRAM
@@ -176,7 +199,7 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отправляем "думаем..."
     thinking_msg = await context.bot.send_message(
         chat_id,
-        "🤔 Создаю задачу в Jira...",
+        "🕊️ Анализирую и создаю задачу...",
         reply_to_message_id=msg_id
     )
 
@@ -199,8 +222,8 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Формируем задачу
-    summary, description = build_task_text(texts)
+    # Анализируем и форматируем
+    summary, description = analyze_and_format(texts)
     
     # Создаем в Jira
     key = create_jira_issue(summary, description)
@@ -256,7 +279,7 @@ def main():
     # Запускаем polling
     app.run_polling(
         allowed_updates=["message", "message_reaction"],
-        drop_pending_updates=True  # Игнорируем старые обновления
+        drop_pending_updates=True
     )
 
 if __name__ == "__main__":
