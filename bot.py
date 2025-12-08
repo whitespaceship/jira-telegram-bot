@@ -19,7 +19,7 @@ from telegram.ext import (
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = None
-TRIGGER_EMOJI = "👹"  # Чертик
+TRIGGER_EMOJI = "👹"
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 openai_client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
@@ -91,93 +91,76 @@ def create_jira_issue(summary: str, description: str):
 # -----------------------------------------
 
 def analyze_with_gpt(messages):
-    """Анализирует контекст через GPT и создает структурированную задачу"""
+    """Анализирует контекст через GPT и создает задачу в Jira стиле"""
     
     if not openai_client:
-        logger.warning("OpenAI key not set, using fallback")
-        return fallback_analysis(messages)
+        logger.error("OpenAI client not initialized")
+        text = "\n".join(messages)
+        return text.split('\n')[0][:60], text
     
-    # Формируем контекст
-    context = "\n\n".join([f"Сообщение {i+1}: {msg}" for i, msg in enumerate(messages)])
+    context = "\n\n".join([f"[{i+1}] {msg}" for i, msg in enumerate(messages)])
     
-    prompt = f"""Проанализируй переписку и создай задачу для Jira.
+    prompt = f"""Ты менеджер продукта. Проанализируй переписку и создай задачу для Jira.
 
-КОНТЕКСТ ИЗ ЧАТА:
+ПЕРЕПИСКА:
 {context}
 
-ТВОЯ ЗАДАЧА:
-1. Определи о чем идет речь в последнем отмеченном сообщении
-2. Используй предыдущие сообщения как контекст для понимания
-3. Сформулируй четкую задачу
+ЗАДАЧА:
+1. Пойми о чем последнее отмеченное сообщение
+2. Используй предыдущие сообщения как контекст
+3. Сформулируй задачу в стиле Jira
 
-ФОРМАТ ОТВЕТА (строго соблюдай):
-SUMMARY: [краткое название задачи, 5-10 слов]
+ФОРМАТ ОТВЕТА:
+SUMMARY: [краткое название задачи, 5-8 слов, как в Jira]
 
 DESCRIPTION:
-[Подробное описание что нужно сделать]
+[Что нужно сделать - конкретно и по делу]
 
-Контекст:
-[релевантная информация из переписки]
+[Контекст из переписки если нужен]
 
-Технические детали:
-[если есть - ошибки, коды, ссылки]"""
+[Технические детали если есть]
+
+Пиши кратко и структурно, как в Jira."""
 
     try:
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты менеджер задач. Анализируешь переписку и создаешь структурированные задачи для Jira."},
+                {"role": "system", "content": "Ты product manager. Создаешь четкие задачи для Jira из переписки команды."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=600
         )
         
         result = response.choices[0].message.content.strip()
+        logger.info(f"GPT response: {result}")
         
-        # Парсим ответ
+        # Парсим
         lines = result.split('\n')
         summary = ""
-        description = []
-        in_description = False
+        description_lines = []
+        found_desc = False
         
         for line in lines:
             if line.startswith("SUMMARY:"):
                 summary = line.replace("SUMMARY:", "").strip()
             elif line.startswith("DESCRIPTION:"):
-                in_description = True
-            elif in_description and line.strip():
-                description.append(line)
+                found_desc = True
+            elif found_desc and line.strip():
+                description_lines.append(line.strip())
         
         if not summary:
-            summary = lines[0][:60] if lines else "Новая задача"
+            summary = lines[0].replace("SUMMARY:", "").strip()[:60]
         
-        if not description:
-            description = [result]
+        description = "\n".join(description_lines) if description_lines else result
         
-        return summary, "\n".join(description)
+        return summary, description
         
     except Exception as e:
-        logger.error(f"GPT analysis failed: {e}")
-        return fallback_analysis(messages)
-
-def fallback_analysis(messages):
-    """Простой анализ без GPT"""
-    text = "\n".join(messages)
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
-    
-    if not lines:
-        return "Новая задача", "Нет описания"
-    
-    summary = lines[0][:60]
-    if len(lines[0]) > 60:
-        summary += "..."
-    
-    description_parts = ["*Контекст из чата:*\n"]
-    for i, msg in enumerate(messages, 1):
-        description_parts.append(f"{i}. {msg}")
-    
-    return summary, "\n".join(description_parts)
+        logger.error(f"GPT failed: {e}")
+        text = "\n".join(messages)
+        return text.split('\n')[0][:60], text
 
 # -----------------------------------------
 # ОБРАБОТЧИКИ TELEGRAM
@@ -224,7 +207,6 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Reaction {TRIGGER_EMOJI} detected on message {msg_id}")
 
-    # Ищем сообщение
     target = None
     for msg in history:
         if msg.message_id == msg_id:
@@ -242,15 +224,14 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     thinking_msg = await context.bot.send_message(
         chat_id,
-        "🤖 Анализирую контекст и создаю задачу...",
+        "🤖 Анализирую контекст через GPT...",
         reply_to_message_id=msg_id
     )
 
-    # Берем последние 10 сообщений до отмеченного
+    # Берем последние 10 сообщений
     idx = history.index(target)
-    context_msgs = history[max(0, idx - 9): idx + 1]  # 10 сообщений включая текущее
+    context_msgs = history[max(0, idx - 9): idx + 1]
 
-    # Извлекаем текст
     texts = []
     for m in context_msgs:
         if m.text:
@@ -268,6 +249,13 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Анализируем через GPT
     summary, description = analyze_with_gpt(texts)
     
+    # Обновляем статус
+    await context.bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=thinking_msg.message_id,
+        text="📝 Создаю задачу в Jira..."
+    )
+    
     # Создаем в Jira
     key = create_jira_issue(summary, description)
 
@@ -284,7 +272,7 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
             text="❌ Ошибка при создании задачи в Jira.\n"
-                 "Проверь логи Railway или права доступа."
+                 "Проверь логи Railway."
         )
 
 # -----------------------------------------
