@@ -1,7 +1,6 @@
 import os
 import logging
 import requests
-from openai import OpenAI
 
 from telegram import Update
 from telegram.ext import (
@@ -18,11 +17,10 @@ from telegram.ext import (
 # -----------------------------------------
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = None
-TRIGGER_EMOJI = "👹"
+TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
+TRIGGER_EMOJI = "😈"  # Голубь мира
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
-openai_client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://overchat.atlassian.net")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
@@ -39,6 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# хранение истории сообщений (в памяти)
 history = []
 
 # -----------------------------------------
@@ -52,6 +51,8 @@ def create_jira_issue(summary: str, description: str):
     logger.info(f"=== JIRA REQUEST DEBUG ===")
     logger.info(f"URL: {url}")
     logger.info(f"Email: {JIRA_EMAIL}")
+    logger.info(f"Token starts: {JIRA_TOKEN[:20] if JIRA_TOKEN else 'MISSING'}...")
+    logger.info(f"Token ends: ...{JIRA_TOKEN[-10:] if JIRA_TOKEN else 'MISSING'}")
     logger.info(f"Project: {JIRA_PROJECT_KEY}")
 
     payload = {
@@ -73,7 +74,11 @@ def create_jira_issue(summary: str, description: str):
         )
 
         logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response headers: {dict(response.headers)}")
         
+        if 'x-seraph-loginreason' in response.headers:
+            logger.error(f"CAPTCHA TRIGGERED! x-seraph-loginreason: {response.headers['x-seraph-loginreason']}")
+
         if response.status_code >= 300:
             logger.error(f"Jira API error [{response.status_code}]: {response.text}")
             return None
@@ -87,86 +92,48 @@ def create_jira_issue(summary: str, description: str):
         return None
 
 # -----------------------------------------
-# GPT АНАЛИЗ
+# АНАЛИЗ И ФОРМАТИРОВАНИЕ ТЕКСТА
 # -----------------------------------------
 
-def analyze_with_gpt(messages):
-    """Анализирует контекст через GPT и создает задачу в Jira стиле"""
+def analyze_and_format(messages):
+    """Анализирует контекст и форматирует для Jira"""
+    text = "\n".join(messages)
     
-    if not openai_client:
-        logger.error("OpenAI client not initialized")
-        text = "\n".join(messages)
-        return text.split('\n')[0][:60], text
+    # Определяем summary (первая строка или ключевая фраза)
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
     
-    context = "\n\n".join([f"[{i+1}] {msg}" for i, msg in enumerate(messages)])
+    if not lines:
+        return "Новая задача", "Нет описания"
     
-    prompt = f"""Ты менеджер продукта. Проанализируй переписку и создай задачу для Jira.
-
-ПЕРЕПИСКА:
-{context}
-
-ЗАДАЧА:
-1. Пойми о чем последнее отмеченное сообщение
-2. Используй предыдущие сообщения как контекст
-3. Сформулируй задачу в стиле Jira
-
-ФОРМАТ ОТВЕТА:
-SUMMARY: [краткое название задачи, 5-8 слов, как в Jira]
-
-DESCRIPTION:
-[Что нужно сделать - конкретно и по делу]
-
-[Контекст из переписки если нужен]
-
-[Технические детали если есть]
-
-Пиши кратко и структурно, как в Jira."""
-
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Ты product manager. Создаешь четкие задачи для Jira из переписки команды."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=600
-        )
-        
-        result = response.choices[0].message.content.strip()
-        logger.info(f"GPT response: {result}")
-        
-        # Парсим
-        lines = result.split('\n')
-        summary = ""
-        description_lines = []
-        found_desc = False
-        
-        for line in lines:
-            if line.startswith("SUMMARY:"):
-                summary = line.replace("SUMMARY:", "").strip()
-            elif line.startswith("DESCRIPTION:"):
-                found_desc = True
-            elif found_desc and line.strip():
-                description_lines.append(line.strip())
-        
-        if not summary:
-            summary = lines[0].replace("SUMMARY:", "").strip()[:60]
-        
-        description = "\n".join(description_lines) if description_lines else result
-        
-        return summary, description
-        
-    except Exception as e:
-        logger.error(f"GPT failed: {e}")
-        text = "\n".join(messages)
-        return text.split('\n')[0][:60], text
+    # Summary = первая строка, макс 60 символов
+    summary = lines[0][:60]
+    if len(lines[0]) > 60:
+        summary += "..."
+    
+    # Description = структурированное описание
+    description_parts = []
+    
+    # Добавляем все сообщения как контекст
+    description_parts.append("*Контекст из чата:*")
+    for i, msg in enumerate(messages, 1):
+        description_parts.append(f"\n{i}. {msg}")
+    
+    # Если есть детали, выделяем их
+    if len(lines) > 1:
+        description_parts.append("\n\n*Детали:*")
+        for line in lines[1:]:
+            description_parts.append(f"• {line}")
+    
+    description = "\n".join(description_parts)
+    
+    return summary, description
 
 # -----------------------------------------
-# ОБРАБОТЧИКИ TELEGRAM
+# ОБРАБОТЧИКИ СОБЫТИЙ TELEGRAM
 # -----------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /start"""
     await update.message.reply_text(
         "✅ Бот работает!\n\n"
         f"Поставь {TRIGGER_EMOJI} на сообщение для создания задачи в Jira.\n"
@@ -174,30 +141,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет все сообщения в историю"""
     msg = update.effective_message
     if not msg:
         return
         
     chat_id = msg.chat_id
 
+    # Фильтр по чату (если задан)
     if TELEGRAM_CHAT_ID and chat_id != TELEGRAM_CHAT_ID:
         return
 
     history.append(msg)
     
+    # Лимит истории
     if len(history) > 100:
         history.pop(0)
     
     logger.debug(f"Message saved: {msg.message_id} from {chat_id}")
 
 async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает реакции на сообщения"""
     react = update.message_reaction
     if react is None:
         return
 
+    # Фильтр по чату
     if TELEGRAM_CHAT_ID and react.chat.id != TELEGRAM_CHAT_ID:
         return
 
+    # Проверяем что добавлен нужный эмодзи
     new_emojis = [r.emoji for r in react.new_reaction or []]
     if TRIGGER_EMOJI not in new_emojis:
         return
@@ -207,6 +180,7 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Reaction {TRIGGER_EMOJI} detected on message {msg_id}")
 
+    # Ищем сообщение в истории
     target = None
     for msg in history:
         if msg.message_id == msg_id:
@@ -222,16 +196,18 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Отправляем "думаем..."
     thinking_msg = await context.bot.send_message(
         chat_id,
-        "🤖 Анализирую контекст через GPT...",
+        "🕊️ Анализирую и создаю задачу...",
         reply_to_message_id=msg_id
     )
 
-    # Берем последние 10 сообщений
+    # Берем контекст: 3 предыдущих + текущее
     idx = history.index(target)
-    context_msgs = history[max(0, idx - 9): idx + 1]
+    context_msgs = history[max(0, idx - 3): idx + 1]
 
+    # Извлекаем текст
     texts = []
     for m in context_msgs:
         if m.text:
@@ -246,15 +222,8 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Анализируем через GPT
-    summary, description = analyze_with_gpt(texts)
-    
-    # Обновляем статус
-    await context.bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=thinking_msg.message_id,
-        text="📝 Создаю задачу в Jira..."
-    )
+    # Анализируем и форматируем
+    summary, description = analyze_and_format(texts)
     
     # Создаем в Jira
     key = create_jira_issue(summary, description)
@@ -272,7 +241,7 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
             text="❌ Ошибка при создании задачи в Jira.\n"
-                 "Проверь логи Railway."
+                 "Проверь логи Railway или права доступа."
         )
 
 # -----------------------------------------
@@ -280,6 +249,7 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------------------
 
 def main():
+    """Запуск бота"""
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TELEGRAM_TOKEN не установлен")
 
@@ -289,13 +259,14 @@ def main():
     logger.info(f"TELEGRAM_TOKEN: {'SET' if TELEGRAM_TOKEN else 'MISSING'}")
     logger.info(f"JIRA_BASE_URL: {JIRA_BASE_URL}")
     logger.info(f"JIRA_EMAIL: {JIRA_EMAIL}")
-    logger.info(f"JIRA_TOKEN: {'SET' if JIRA_TOKEN else 'MISSING'}")
+    logger.info(f"JIRA_TOKEN: {'SET (' + JIRA_TOKEN[:20] + '...' + JIRA_TOKEN[-10:] + ')' if JIRA_TOKEN else 'MISSING'}")
     logger.info(f"JIRA_PROJECT_KEY: {JIRA_PROJECT_KEY}")
     logger.info(f"OPENAI_KEY: {'SET' if OPENAI_KEY else 'MISSING'}")
     logger.info("=" * 50)
     
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # Регистрируем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.ALL, save_message))
     app.add_handler(MessageReactionHandler(reaction))
@@ -305,6 +276,7 @@ def main():
     logger.info(f"📁 Проект Jira: {JIRA_PROJECT_KEY}")
     logger.info(f"🔗 {JIRA_BASE_URL}")
     
+    # Запускаем polling
     app.run_polling(
         allowed_updates=["message", "message_reaction"],
         drop_pending_updates=True
