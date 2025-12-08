@@ -18,7 +18,7 @@ from telegram.ext import (
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = None  # None = работает во всех чатах где бот админ
-TRIGGER_EMOJI = "🕊️"  # Голубь мира
+TRIGGER_EMOJI = "😈"  #  Чертила
 
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 
