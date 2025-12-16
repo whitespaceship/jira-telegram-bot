@@ -171,7 +171,7 @@ DESCRIPTION:
         logger.error(f"GPT failed: {e}", exc_info=True)
         text = "\n".join(messages)
         return text.split('\n')[0][:60], text
-        
+
 # -----------------------------------------
 # ОБРАБОТЧИКИ TELEGRAM
 # -----------------------------------------
@@ -238,16 +238,16 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_to_message_id=msg_id
     )
 
-    # Берем последние 10 сообщений
+    # Берем ТОЛЬКО 7 сообщений ДО отмеченного + само отмеченное
     idx = history.index(target)
-    context_msgs = history[max(0, idx - 9): idx + 1]
+    context_msgs = history[max(0, idx - 7): idx + 1]
 
     texts = []
     for m in context_msgs:
         if m.text:
             texts.append(m.text)
 
-    logger.info(f"Collected {len(texts)} messages")
+    logger.info(f"Collected {len(texts)} messages for analysis")
 
     if not texts:
         await context.bot.edit_message_text(
