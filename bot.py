@@ -26,6 +26,7 @@ openai_client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 LINEAR_API_KEY = os.getenv("LINEAR_API_KEY")
 LINEAR_TEAM_ID = os.getenv("LINEAR_TEAM_ID")
+LINEAR_ASSIGNEE_ID = os.getenv("LINEAR_ASSIGNEE_ID", "08f50554-ec80-4777-b5ff-fe66db110b19")  # egainulina
 LINEAR_API_URL = "https://api.linear.app/graphql"
 
 # -----------------------------------------
@@ -51,11 +52,12 @@ def create_linear_issue(title: str, description: str):
     logger.info(f"Creating task: {title}")
 
     query = """
-    mutation IssueCreate($title: String!, $description: String, $teamId: String!) {
+    mutation IssueCreate($title: String!, $description: String, $teamId: String!, $assigneeId: String) {
         issueCreate(input: {
             title: $title
             description: $description
             teamId: $teamId
+            assigneeId: $assigneeId
         }) {
             success
             issue {
@@ -70,7 +72,8 @@ def create_linear_issue(title: str, description: str):
     variables = {
         "title": title[:200],
         "description": description,
-        "teamId": LINEAR_TEAM_ID
+        "teamId": LINEAR_TEAM_ID,
+        "assigneeId": LINEAR_ASSIGNEE_ID
     }
 
     try:
