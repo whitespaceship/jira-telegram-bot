@@ -24,10 +24,9 @@ TRIGGER_EMOJI = "😈"
 OPENAI_KEY = os.getenv("OPENAI_KEY")
 openai_client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
-JIRA_BASE_URL = os.getenv("JIRA_BASE_URL", "https://overchat.atlassian.net")
-JIRA_EMAIL = os.getenv("JIRA_EMAIL")
-JIRA_TOKEN = os.getenv("JIRA_TOKEN")
-JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY", "DEV")
+LINEAR_API_KEY = os.getenv("LINEAR_API_KEY")
+LINEAR_TEAM_ID = os.getenv("LINEAR_TEAM_ID")
+LINEAR_API_URL = "https://api.linear.app/graphql"
 
 # -----------------------------------------
 # ЛОГИ
@@ -42,58 +41,88 @@ logger = logging.getLogger(__name__)
 history = []
 
 # -----------------------------------------
-# ФУНКЦИИ JIRA
+# ФУНКЦИИ LINEAR
 # -----------------------------------------
 
-def create_jira_issue(summary: str, description: str):
-    """Создает задачу в Jira через REST API v2"""
-    url = f"{JIRA_BASE_URL}/rest/api/2/issue"
+def create_linear_issue(title: str, description: str):
+    """Создает задачу в Linear через GraphQL API"""
 
-    logger.info(f"=== JIRA REQUEST DEBUG ===")
-    logger.info(f"Creating task: {summary}")
+    logger.info(f"=== LINEAR REQUEST DEBUG ===")
+    logger.info(f"Creating task: {title}")
 
-    payload = {
-        "fields": {
-            "project": {"key": JIRA_PROJECT_KEY},
-            "summary": summary[:254],
-            "description": description,
-            "issuetype": {"name": "Task"}
+    query = """
+    mutation IssueCreate($title: String!, $description: String, $teamId: String!) {
+        issueCreate(input: {
+            title: $title
+            description: $description
+            teamId: $teamId
+        }) {
+            success
+            issue {
+                id
+                identifier
+                url
+            }
         }
+    }
+    """
+
+    variables = {
+        "title": title[:200],
+        "description": description,
+        "teamId": LINEAR_TEAM_ID
     }
 
     try:
         response = requests.post(
-            url,
-            json=payload,
-            auth=(JIRA_EMAIL, JIRA_TOKEN),
-            headers={"Content-Type": "application/json"},
+            LINEAR_API_URL,
+            json={"query": query, "variables": variables},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {LINEAR_API_KEY}"
+            },
             timeout=20
         )
 
         if response.status_code >= 300:
-            logger.error(f"Jira API error [{response.status_code}]: {response.text}")
-            return None
+            logger.error(f"Linear API error [{response.status_code}]: {response.text}")
+            return None, None
 
         data = response.json()
-        logger.info(f"Jira task created: {data.get('key')}")
-        return data.get("key")
-        
+
+        if "errors" in data:
+            logger.error(f"Linear GraphQL error: {data['errors']}")
+            return None, None
+
+        issue_data = data.get("data", {}).get("issueCreate", {})
+
+        if not issue_data.get("success"):
+            logger.error(f"Linear issue creation failed: {data}")
+            return None, None
+
+        issue = issue_data.get("issue", {})
+        identifier = issue.get("identifier")
+        url = issue.get("url")
+
+        logger.info(f"Linear task created: {identifier}")
+        return identifier, url
+
     except Exception as e:
-        logger.error(f"Jira request failed: {e}")
-        return None
+        logger.error(f"Linear request failed: {e}")
+        return None, None
 
 # -----------------------------------------
 # GPT АНАЛИЗ
 # -----------------------------------------
 
 def analyze_with_gpt(message_text: str):
-    """Анализирует одно сообщение через GPT и создает задачу в Jira стиля"""
-    
+    """Анализирует одно сообщение через GPT и создает задачу для Linear"""
+
     if not openai_client:
         logger.error("OpenAI client not initialized - check OPENAI_KEY")
         return message_text.split('\n')[0][:60], message_text
-    
-    prompt = f"""Проанализируй это сообщение из Telegram и создай задачу для Jira. 
+
+    prompt = f"""Проанализируй это сообщение из Telegram и создай задачу для Linear.
 
 СООБЩЕНИЕ:
 {message_text}
@@ -108,10 +137,10 @@ def analyze_with_gpt(message_text: str):
 SUMMARY: [Краткое название охватывающее все пункты, 5-12 слов]
 
 DESCRIPTION:
-*Что нужно сделать:*
+**Что нужно сделать:**
 [Полный список всех пунктов из сообщения]
 
-*Список упомянутого:*
+**Список упомянутого:**
 [Все API, платформы, инструменты]"""
 
     try:
@@ -119,7 +148,7 @@ DESCRIPTION:
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты senior product manager. Создаешь детальные задачи для Jira на основе одного сообщения. Не добавляй предположений, работай только с тем, что написано в сообщении."},
+                {"role": "system", "content": "Ты senior product manager. Создаешь детальные задачи для Linear на основе одного сообщения. Не добавляй предположений, работай только с тем, что написано в сообщении."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
@@ -165,8 +194,8 @@ DESCRIPTION:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Бот работает!\n\n"
-        f"Поставь {TRIGGER_EMOJI} на сообщение для создания задачи в Jira.\n"
-        f"Проект: {JIRA_PROJECT_KEY}\n"
+        f"Поставь {TRIGGER_EMOJI} на сообщение для создания задачи в Linear.\n"
+        f"Linear: {'✅' if LINEAR_API_KEY else '❌'}\n"
         f"OpenAI: {'✅' if openai_client else '❌'}"
     )
 
@@ -243,25 +272,25 @@ async def reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.edit_message_text(
         chat_id=chat_id,
         message_id=thinking_msg.message_id,
-        text="📝 Создаю в Jira..."
+        text="📝 Создаю в Linear..."
     )
-    
-    # Jira
-    key = create_jira_issue(summary, description)
 
-    if key:
+    # Linear
+    identifier, url = create_linear_issue(summary, description)
+
+    if identifier:
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
             text=f"✅ Задача создана!\n\n"
-                 f"🔗 {JIRA_BASE_URL}/browse/{key}\n\n"
-                 f"📝 {summary}"
+                 f"🔗 {url}\n\n"
+                 f"📝 {identifier}: {summary}"
         )
     else:
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=thinking_msg.message_id,
-            text="❌ Ошибка Jira. Проверь логи."
+            text="❌ Ошибка Linear. Проверь логи."
         )
 
 # -----------------------------------------
@@ -276,9 +305,8 @@ def main():
     logger.info("STARTUP CHECK")
     logger.info("=" * 50)
     logger.info(f"TELEGRAM_TOKEN: {'SET' if TELEGRAM_TOKEN else 'MISSING'}")
-    logger.info(f"JIRA_EMAIL: {JIRA_EMAIL}")
-    logger.info(f"JIRA_TOKEN: {'SET' if JIRA_TOKEN else 'MISSING'}")
-    logger.info(f"JIRA_PROJECT_KEY: {JIRA_PROJECT_KEY}")
+    logger.info(f"LINEAR_API_KEY: {'SET' if LINEAR_API_KEY else 'MISSING'}")
+    logger.info(f"LINEAR_TEAM_ID: {LINEAR_TEAM_ID}")
     logger.info(f"OPENAI_KEY: {'SET' if OPENAI_KEY else 'MISSING'}")
     logger.info(f"OpenAI Client: {'OK' if openai_client else 'NOT INITIALIZED'}")
     logger.info("=" * 50)
@@ -291,7 +319,7 @@ def main():
 
     logger.info(f"🤖 Бот запущен!")
     logger.info(f"📌 Эмодзи: {TRIGGER_EMOJI}")
-    logger.info(f"📁 Проект: {JIRA_PROJECT_KEY}")
+    logger.info(f"📁 Linear Team ID: {LINEAR_TEAM_ID}")
     
     app.run_polling(
         allowed_updates=["message", "message_reaction"],
