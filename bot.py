@@ -79,7 +79,7 @@ def create_linear_issue(title: str, description: str):
             json={"query": query, "variables": variables},
             headers={
                 "Content-Type": "application/json",
-                "Authorization": LINEAR_API_KEY
+                "Authorization": f"Bearer {LINEAR_API_KEY}"
             },
             timeout=20
         )
